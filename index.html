@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>宇宙见缝插针 v9 (速度修正与防抖)</title>
+    <style>
+        :root {
+            --circle-radius: 80px;
+            --needle-length: 70px;
+        }
+
+        body {
+            margin: 0; padding: 0; background-color: #0A0A0A;
+            background-image: linear-gradient(to bottom, #0A0A2A, #1A1A3A);
+            height: 100vh; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; transition: background-color 0.5s;
+        }
+        body.game-over { background-color: #4d1a1a; background-image: none; }
+        body::before { content: ''; position: absolute; top: 0; left: 0; width: 1px; height: 1px; background: transparent; box-shadow: -133px 43vh white, 276px 87vh white, -399px 21vh white, 482px 56vh white, -150px 80vh white, 320px 30vh white, -450px 50vh white, 500px 90vh white, 100px 10vh white, 600px 25vh white, -250px 5vh white, 420px 75vh white; }
+
+        #score-display {
+            font-size: 48px; font-weight: bold; position: absolute;
+            top: 20px; color: #ecf0f1; text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        #game-container {
+            position: relative; width: 500px; height: 500px;
+            display: flex; justify-content: center; align-items: center;
+            cursor: pointer;
+        }
+
+        #center-circle {
+            position: absolute; width: calc(var(--circle-radius) * 2); height: calc(var(--circle-radius) * 2);
+            background-color: #2c3e50; border-radius: 50%; border: 3px solid #7f8c8d;
+            z-index: 10;
+        }
+        
+        .needle {
+            position: absolute; width: 4px; height: var(--needle-length);
+            background-color: #ffffff; transform-origin: bottom center;
+        }
+        .needle.stuck {
+            left: 50%; top: 50%;
+        }
+        .needle::after {
+            content: ''; position: absolute; top: -10px; left: 50%;
+            transform: translateX(-50%); width: 10px; height: 10px;
+            background-color: #ffffff; border-radius: 50%;
+        }
+        
+        #launcher {
+            position: absolute;
+            bottom: -25px; 
+            z-index: 15;
+        }
+        #launcher .needle {
+            position: relative; left: auto; top: auto;
+        }
+
+        .flying-needle {
+            left: 50%;
+            bottom: calc(-25px + var(--needle-length));
+            transition: transform 0.15s linear;
+            z-index: 5;
+        }
+
+        #ui-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            display: none; flex-direction: column; justify-content: center;
+            align-items: center; text-align: center; background-color: rgba(0, 0, 0, 0.7);
+            z-index: 20;
+        }
+        #game-over-text { font-size: 48px; font-weight: bold; color: #e74c3c; text-shadow: 2px 2px 4px #000; }
+        #restart-button { margin-top: 20px; padding: 10px 25px; font-size: 20px; color: white; background-color: #3498db; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; }
+        #restart-button:hover { background-color: #2980b9; }
+
+        #controls-container {
+            margin-top: 40px; padding: 10px 20px;
+            background-color: rgba(44, 62, 80, 0.5); border-radius: 8px;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .control {
+            display: flex; align-items: center; gap: 15px;
+        }
+        .control label { min-width: 100px; }
+        .control input[type="range"] { flex-grow: 1; }
+
+    </style>
+</head>
+<body>
+    <div id="score-display">0</div>
+    <div id="game-container">
+        <div id="center-circle"></div>
+        <div id="launcher"><div class="needle"></div></div>
+        <div id="ui-overlay">
+            <div id="game-over-text">游戏失败</div>
+            <button id="restart-button">重新开始</button>
+        </div>
+    </div>
+
+    <div id="controls-container">
+        <div class="control">
+            <label for="rotation-speed-slider">旋转速度</label>
+            <input type="range" id="rotation-speed-slider" min="10" max="200" value="50" step="5">
+        </div>
+        <div class="control">
+            <label for="launch-speed-slider">发射速度</label>
+            <input type="range" id="launch-speed-slider" min="50" max="500" value="150" step="10">
+        </div>
+    </div>
+
+    <script>
+        // DOM 元素
+        const gameContainer = document.getElementById('game-container');
+        const centerCircle = document.getElementById('center-circle');
+        const scoreDisplay = document.getElementById('score-display');
+        const uiOverlay = document.getElementById('ui-overlay');
+        const restartButton = document.getElementById('restart-button');
+        const body = document.body;
+        const rotationSpeedSlider = document.getElementById('rotation-speed-slider');
+        const launchSpeedSlider = document.getElementById('launch-speed-slider');
+
+        // 游戏配置
+        let ROTATION_SPEED = 50;
+        let LAUNCH_DURATION_MS = 150; 
+        const MIN_ANGLE_DIFFERENCE = 7;
+        // ================= 修复/新增 START =================
+        const MIN_LAUNCH_INTERVAL = 100; // 设置最短发射间隔为100毫秒
+        // ================== 修复/新增 END ==================
+
+        // 游戏状态
+        let score = 0;
+        let stuckNeedleAngles = [];
+        let currentCircleAngle = 0;
+        let isGameOver = false;
+        let gameLoopId = null;
+        let isNeedleInFlight = false; 
+        // ================= 修复/新增 START =================
+        let lastLaunchTime = 0; // 记录上一次发射的时间戳
+        // ================== 修复/新增 END ==================
+
+        // 核心功能函数
+        function startGame() {
+            score = 0;
+            stuckNeedleAngles = [];
+            currentCircleAngle = 0;
+            isGameOver = false;
+            isNeedleInFlight = false;
+            lastLaunchTime = 0; // 重置发射时间
+            scoreDisplay.textContent = score;
+            body.className = '';
+            uiOverlay.style.display = 'none';
+            centerCircle.innerHTML = '';
+            centerCircle.style.transform = 'rotate(0deg)';
+            
+            ROTATION_SPEED = parseFloat(rotationSpeedSlider.value);
+            // 初始化发射速度
+            updateLaunchSpeed(parseFloat(launchSpeedSlider.value));
+
+            lastFrameTime = 0;
+            if (gameLoopId) cancelAnimationFrame(gameLoopId);
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        function shootNeedle() {
+            // ================= 修复/新增 START =================
+            const now = Date.now();
+            if (isGameOver || isNeedleInFlight || now - lastLaunchTime < MIN_LAUNCH_INTERVAL) {
+                return;
+            }
+            lastLaunchTime = now; // 记录本次发射时间
+            // ================== 修复/新增 END ==================
+
+            isNeedleInFlight = true;
+
+            const flyingNeedle = document.createElement('div');
+            flyingNeedle.className = 'needle flying-needle';
+            flyingNeedle.style.transition = `transform ${LAUNCH_DURATION_MS / 1000}s linear`;
+            
+            gameContainer.appendChild(flyingNeedle);
+
+            flyingNeedle.addEventListener('transitionend', () => {
+                handleImpact();
+                flyingNeedle.remove();
+            });
+
+            requestAnimationFrame(() => {
+                const targetY = -(gameContainer.offsetHeight / 2 - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--circle-radius')) - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--needle-length')));
+                flyingNeedle.style.transform = `translateY(${targetY}px)`;
+            });
+        }
+
+        function handleImpact() {
+            const worldAngleOfImpact = 180;
+            const newNeedleRelativeAngle = (worldAngleOfImpact - currentCircleAngle + 360) % 360;
+
+            for (const existingAngle of stuckNeedleAngles) {
+                let diff = Math.abs(newNeedleRelativeAngle - existingAngle);
+                if (diff > 180) diff = 360 - diff;
+                if (diff < MIN_ANGLE_DIFFERENCE) {
+                    gameOver();
+                    isNeedleInFlight = false;
+                    return;
+                }
+            }
+
+            score++;
+            scoreDisplay.textContent = score;
+            stuckNeedleAngles.push(newNeedleRelativeAngle);
+
+            const newStuckNeedle = document.createElement('div');
+            newStuckNeedle.className = 'needle stuck';
+            newStuckNeedle.style.transform = `
+                translateX(-50%) translateY(-100%) 
+                rotate(${newNeedleRelativeAngle}deg) 
+                translateY(calc(var(--circle-radius) * -1))
+            `;
+            centerCircle.appendChild(newStuckNeedle);
+
+            isNeedleInFlight = false;
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            body.classList.add('game-over');
+            uiOverlay.style.display = 'flex';
+            if (gameLoopId) cancelAnimationFrame(gameLoopId);
+        }
+
+        let lastFrameTime = 0;
+        function gameLoop(timestamp) {
+            if (isGameOver) return;
+            if (!lastFrameTime) lastFrameTime = timestamp;
+            const deltaTime = (timestamp - lastFrameTime) / 1000;
+            lastFrameTime = timestamp;
+
+            currentCircleAngle = (currentCircleAngle + ROTATION_SPEED * deltaTime) % 360;
+            centerCircle.style.transform = `rotate(${currentCircleAngle}deg)`;
+
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        // ================= 修复/新增 START =================
+        // 封装一个更新发射速度的函数，用于反转逻辑
+        function updateLaunchSpeed(sliderValue) {
+            const minDuration = 50;  // 对应滑块最大值，最快速度
+            const maxDuration = 500; // 对应滑块最小值，最慢速度
+            const sliderMin = parseFloat(launchSpeedSlider.min);
+            const sliderMax = parseFloat(launchSpeedSlider.max);
+            
+            // 将滑块的值 [min, max] 映射到发射时间 [maxDuration, minDuration]
+            const percentage = (sliderValue - sliderMin) / (sliderMax - sliderMin);
+            LAUNCH_DURATION_MS = maxDuration - (percentage * (maxDuration - minDuration));
+        }
+        // ================== 修复/新增 END ==================
+
+        // 事件绑定
+        gameContainer.addEventListener('click', shootNeedle);
+        gameContainer.addEventListener('touchstart', (e) => { e.preventDefault(); shootNeedle(); });
+        restartButton.addEventListener('click', startGame);
+
+        rotationSpeedSlider.addEventListener('input', (e) => {
+            ROTATION_SPEED = parseFloat(e.target.value);
+        });
+
+        // ================= 修复/新增 START =================
+        // 发射速度滑块的事件监听器现在调用新函数
+        launchSpeedSlider.addEventListener('input', (e) => {
+            updateLaunchSpeed(parseFloat(e.target.value));
+        });
+        // ================== 修复/新增 END ==================
+        
+        // 启动游戏
+        startGame();
+    </script>
+</body>
+</html>
