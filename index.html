@@ -260,7 +260,10 @@
         // 事件绑定
         gameContainer.addEventListener('click', shootNeedle);
         gameContainer.addEventListener('touchstart', (e) => { e.preventDefault(); shootNeedle(); });
-        restartButton.addEventListener('click', startGame);
+       restartButton.addEventListener('touchstart', (e) => {
+    e.preventDefault(); // 阻止浏览器在触摸后触发默认行为或模拟click事件
+    startGame();
+});
 
         rotationSpeedSlider.addEventListener('input', (e) => {
             ROTATION_SPEED = parseFloat(e.target.value);
