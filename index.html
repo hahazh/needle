@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>宇宙见缝插针 v9 (速度修正与防抖)</title>
+    <title>宇宙见缝插针 v9 </title>
     <style>
         :root {
             --circle-radius: 80px;
@@ -260,8 +260,7 @@
         // 事件绑定
         gameContainer.addEventListener('click', shootNeedle);
         gameContainer.addEventListener('touchstart', (e) => { e.preventDefault(); shootNeedle(); });
-       restartButton.addEventListener('touchstart', (e) => {
-    e.preventDefault(); // 阻止浏览器在触摸后触发默认行为或模拟click事件
+         restartButton.addEventListener('touchstart', startGame);
     startGame();
 });
 
